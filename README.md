@@ -1,12 +1,12 @@
 # Docker Hub Image
 
-The files in this directory are used to build the `ibmcom/websphere-traditional` images on [Docker Hub](https://hub.docker.com/r/ibmcom/websphere-traditional/). These images contain the ILAN licensed IBM WebSphere Application Server traditional. If you wish to build these yourself just follow [these instructions](docker-build/README.md), otherwise please see below on how to extend our pre-built image with your application and configuration!
+The files in this directory are used to build the `ibmcom/websphere-traditional` images on [Docker Hub](https://hub.docker.com/r/ibmcom/websphere-traditional/). These images contain the ILAN licensed IBM WebSphere Application Server traditional. If you wish to build these yourself just follow [these instructions](docker-build/9.0.5.x/README.md), otherwise please see below on how to extend our pre-built image with your application and configuration!  Once you're ready to deploy this into Kubernetes, please see our [helm chart](https://github.com/IBM/charts/tree/master/stable/ibm-websphere-traditional).
 
-**Note:** Have you considered trying out WebSphere Liberty?  It's based on the Open Source project `Open Liberty`, fully supports Java EE8 and MicroProfile 2.0, and it's much lighter, faster and easier to configure than WAS traditional. You can try it today for free from [Docker Hub](https://hub.docker.com/_/websphere-liberty/). If you have entitlement for WAS traditional you already have entitlement for Liberty included.  Find out more about how to use this in Kubernetes [here](https://www.ibm.com/blogs/bluemix/2018/10/certified-kubernetes-deployments-for-websphere-liberty/).
+**Note:** Have you considered trying out WebSphere Liberty?  It's based on the Open Source project `Open Liberty`, fully supports Java EE8 and MicroProfile 2.0, and it's much lighter, faster and easier to configure than WAS traditional. You can try it today for free from [Docker Hub](https://hub.docker.com/_/websphere-liberty/). If you have entitlement for WAS traditional you already have entitlement for Liberty included.  Find out more about how to use WebSphere Liberty in Kubernetes [here](https://www.ibm.com/blogs/bluemix/2018/10/certified-kubernetes-deployments-for-websphere-liberty/).
 
 ## Building an application image 
 
-The Docker Hub image contains a tradittional WebSphere Application Server v9 instance with no applications or configuration applied to it.
+The Docker Hub image contains a traditional WebSphere Application Server v9 instance with no applications or configuration applied to it.
 
 ### Best practices
 
@@ -18,7 +18,7 @@ The key point to take-away from the sections below is that your application Dock
 
 ```
 FROM ibmcom/websphere-traditional:<version>
-# copy property files and jython scripts, using the flag `--chown=was:was` to set the appropriate permission
+# copy property files and jython scripts, using the flag `--chown=was:root` to set the appropriate permission
 RUN /work/configure.sh
 ```
 
@@ -28,14 +28,14 @@ This will result in a Docker image that has your application and configuration p
 
 ### Adding properties during build phase 
 
-Starting with `9.0.0.9` the `profile` Docker Hub images contain a script, `/work/applyConfig.sh`, which will apply the [config properties](https://www.ibm.com/support/knowledgecenter/en/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_7propbasedconfig.html) found inside the `/work/config/was-config.props` file.  This script will be run with the server in `stopped` mode.
+Starting with `9.0.0.9` the `profile` Docker Hub images contain a script, `/work/applyConfig.sh`, which will apply the [config properties](https://www.ibm.com/support/knowledgecenter/en/SSAW57_9.0.0/com.ibm.websphere.nd.multiplatform.doc/ae/rxml_7propbasedconfig.html) found inside the `/work/config/*.props` file.  This script will be run with the server in `stopped` mode and the props will be applied in alphabetic order.
 
-For example, if you had the following `/work/config/was-config.props`:
+For example, if you had the following `/work/config/001-was-config.props`:
 
 ```
 ResourceType=JavaVirtualMachine
 ImplementingResourceType=Server
-ResourceId=Cell=!{cellName}:Node=!{nodeName}:Server=!{serverName}:JavaProcessDef=ID#JavaProcessDef_1183122130078:JavaVirtualMachine=ID#JavaVirtualMachine_1183122130078
+ResourceId=Cell=!{cellName}:Node=!{nodeName}:Server=!{serverName}:JavaProcessDef=:JavaVirtualMachine=
 AttributeInfo=jvmEntries
 #
 #
@@ -48,9 +48,11 @@ You can then create a new image which has this configuration by simply building 
 
 ```
 FROM ibmcom/websphere-traditional:latest
-COPY --chown=was:was was-config.props /work/config
+COPY --chown=was:root was-config.props /work/config
 RUN /work/configure.sh
 ```
+
+You may use numeric prefix on your prop files names, so props the have dependencies can be applied in an adequate order.
 
 ### Adding an application and advanced configuration during build phase 
 
@@ -61,12 +63,23 @@ Putting it all together, you would have a Dockerfile such as:
 
 ```
 FROM ibmcom/websphere-traditional:latest
-COPY --chown=was:was was-config.props /work/config
-COPY --chown=was:was myApp.war /work/app
-COPY --chown=was:was myAppDeploy.py dataSourceConfig.py /work/config
+COPY --chown=was:root was-config.props /work/config
+COPY --chown=was:root myApp.war /work/app
+COPY --chown=was:root myAppDeploy.py dataSourceConfig.py /work/config
 RUN /work/configure.sh
 ```
+### Logging configuration
+	
+By default, the Docker Hub image is using High Performance Extensible Logging (HPEL) mode and is outputing logs in JSON format. This logging configuration will make the docker container a lot easier to work with ELK stacks. 
 
+Alternatively, user can use basic logging mode is plain text format. You can switch the logging mode to basic via the following Dockerfile:
+
+```
+FROM ibmcom/websphere-traditional:latest
+ENV ENABLE_BASIC_LOGGING=true
+RUN /work/configure.sh
+```
+    
 ### Running Jython scripts individually
 
 If you have some Jython scripts that must be run in a certain order, or if they require parameters to be passed in, then you can directly call
@@ -76,7 +89,7 @@ Let's say you have 2 scripts, `configA.py` and `configB.py`, which must be run i
 
 ```
 FROM ibmcom/websphere-traditional:latest
-COPY --chown=was:was configA.py configB.py /work/
+COPY --chown=was:root configA.py configB.py /work/
 RUN /work/configure.sh /work/configA.py <args> \
     && /work/configure.sh /work/configB.py <args>
 ```
@@ -90,6 +103,8 @@ So during `docker run` you can setup a volume that mounts property files into `/
 ```bash
 docker run -v /config:/etc/websphere  -p 9043:9043 -p 9443:9443 websphere-traditional:9.0.0.9-profile
 ```
+
+Similarly to build-phase props, the dynamic runtime props will also be applied in alphabetic order, so you can also use numeric prefixes to guarantee dependent props are applied in an adequate order.
 
 ![Dynamic](/graphics/twas_container_local.png)
 
